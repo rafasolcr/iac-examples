@@ -3,69 +3,65 @@ provider "aws" {
   region  = "us-east-1"
 }
 
-resource "aws_vpc" "vpc_ll" {
-  cidr_block = "10.0.0.0/16"
-}
-
-data "aws_subnet_ids" "all" {
-  vpc_id = "resource.aws_vpc.vpc_ll.id"
-}
-
 data "aws_ami" "centos" {
-owners      = ["679593333241"]
-most_recent = true
+  owners      = ["679593333241"]
+  most_recent = true
 
   filter {
-      name   = "name"
-      values = ["CentOS Linux 7 x86_64 HVM EBS *"]
+    name   = "name"
+    values = ["CentOS Linux 7 x86_64 HVM EBS *"]
   }
 
   filter {
-      name   = "architecture"
-      values = ["x86_64"]
+    name   = "architecture"
+    values = ["x86_64"]
   }
 
   filter {
-      name   = "root-device-type"
-      values = ["ebs"]
+    name   = "root-device-type"
+    values = ["ebs"]
   }
 }
 
-
-module "security_group" {
-  source = "terraform-aws-modules/security-group/aws"
-  version = "~> 3.0"
-
-  name = "sg_ll"
-  description = "Security group for Lunch and Learn example"
-  vpc_id = "data.aws_vpc.vpc_ll.id"
-
-  ingress_cidr_blocks = ["0.0.0.0/0"]
-  ingress_rules = ["http-80-tcp", "all-icmp"]
-  egress_rules = ["all-all"]
-}
-
-resource "aws_placement_group" "web" {
-  name = "ll-pg"
-  strategy = "cluster"
-}
-
-resource "aws_kms_key" "this" {
-}
-
-resource "aws_network_interface" "this" {
-  count = 1
-
-  subnet_id = tolist(data.aws_subnet_ids.all.ids)[count.index]
-}
-
-#https://www.terraform.io/docs/providers/aws/r/instance.html
-
-resource "aws_instance" "web" {
+resource "aws_instance" "ec2-instance-ll" {
   ami           = "${data.aws_ami.centos.id}"
-  instance_type = "t2.micro"
-
-  tags = {
-    Name = "HelloWorld"
+  instance_type = "${var.instance_size}"
+  key_name      = "${var.ami_key_pair_name}"
+  count         = "${length(var.private_ips)}"
+  root_block_device {
+    delete_on_termination = true
   }
+  network_interface {
+    network_interface_id = "${aws_network_interface.ni-ll.*.id[count.index]}"
+    device_index         = 0
+  }
+  tags = {
+    Name = "ec2 instance_${count.index + 1}"
+  }
+}
+
+resource "aws_network_interface" "ni-ll" {
+  subnet_id   = "${var.subnet_id}"
+  private_ips = ["${var.private_ips[count.index]}"]
+  count       = "${length(var.private_ips)}"
+  tags = {
+    Name = "primary_network_interface_ll_${count.index + 1}"
+  }
+}
+
+resource "aws_eip" "instance-ip-ll" {
+  instance = "${aws_instance.ec2-instance-ll.*.id[count.index]}"
+  vpc      = true
+  count    = "${length(var.private_ips)}"
+  tags = {
+    Name = "public-instance-ip-ll_${count.index + 1}"
+  }
+}
+
+output "public_dns" {
+  value = "${aws_eip.instance-ip-ll.*.public_dns}"
+}
+
+output "private_ip" {
+  value = "${aws_instance.ec2-instance-ll.*.private_ip}"
 }
